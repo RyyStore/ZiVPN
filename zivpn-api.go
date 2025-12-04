@@ -145,9 +145,16 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 5. Read Domain
+	domain := "Tidak diatur"
+	if domainBytes, err := ioutil.ReadFile(DomainFile); err == nil {
+		domain = strings.TrimSpace(string(domainBytes))
+	}
+
 	jsonResponse(w, http.StatusOK, true, "User berhasil dibuat", map[string]string{
 		"password": req.Password,
 		"expired":  expDate,
+		"domain":   domain,
 	})
 }
 
