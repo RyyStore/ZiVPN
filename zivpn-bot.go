@@ -250,7 +250,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-	msgText := fmt.Sprintf("————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nDomain         : %s\nCITY           : %s\nISP            : %s\n————————————————————————————————————\nSilakan pilih menu:",
+	msgText := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nDomain         : %s\nCITY           : %s\nISP            : %s\n————————————————————————————————————\n```\nSilakan pilih menu:",
 		domain, ipInfo.City, ipInfo.Isp)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
