@@ -26,6 +26,11 @@ type BotConfig struct {
 	AdminID  int64  `json:"admin_id"`
 }
 
+type IpInfo struct {
+	City string `json:"city"`
+	Isp  string `json:"isp"`
+}
+
 var userStates = make(map[int64]string)
 var tempUserData = make(map[int64]map[string]string)
 var lastMessageIDs = make(map[int64]int)
@@ -95,14 +100,14 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, adminID
 	case "menu_create":
 		userStates[query.From.ID] = "create_username"
 		tempUserData[query.From.ID] = make(map[string]string)
-		sendMessage(bot, query.Message.Chat.ID, "👤 Masukkan Username:")
+		sendMessage(bot, query.Message.Chat.ID, "👤 Masukkan Password:")
 	case "menu_delete":
 		userStates[query.From.ID] = "delete_username"
-		sendMessage(bot, query.Message.Chat.ID, "🗑️ Masukkan Username yang akan dihapus:")
+		sendMessage(bot, query.Message.Chat.ID, "🗑️ Masukkan Password yang akan dihapus:")
 	case "menu_renew":
 		userStates[query.From.ID] = "renew_username"
 		tempUserData[query.From.ID] = make(map[string]string)
-		sendMessage(bot, query.Message.Chat.ID, "🔄 Masukkan Username yang akan diperpanjang:")
+		sendMessage(bot, query.Message.Chat.ID, "🔄 Masukkan Password yang akan diperpanjang:")
 	case "menu_list":
 		listUsers(bot, query.Message.Chat.ID)
 	case "menu_info":
@@ -161,12 +166,12 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👤 Create User", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete User", "menu_delete"),
+			tgbotapi.NewInlineKeyboardButtonData("👤 Create Password", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("🗑️ Delete Password", "menu_delete"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew User", "menu_renew"),
-			tgbotapi.NewInlineKeyboardButtonData("📋 List Users", "menu_list"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Password", "menu_renew"),
+			tgbotapi.NewInlineKeyboardButtonData("📋 List Passwords", "menu_list"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 System Info", "menu_info"),
@@ -243,6 +248,20 @@ func apiCall(method, endpoint string, payload interface{}) (map[string]interface
 	return result, nil
 }
 
+func getIpInfo() (IpInfo, error) {
+	resp, err := http.Get("http://ip-api.com/json/")
+	if err != nil {
+		return IpInfo{}, err
+	}
+	defer resp.Body.Close()
+
+	var info IpInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return IpInfo{}, err
+	}
+	return info, nil
+}
+
 func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": username,
@@ -256,12 +275,16 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
-		msg := fmt.Sprintf("✅ *User Created*\n\n👤 Username: `%s`\n📅 Expired: `%s`\n🌐 Domain: `%s`",
-			data["password"], data["expired"], data["domain"])
+		
+		ipInfo, _ := getIpInfo() // Ignore error, just show empty if fails
+		
+		msg := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nPassword       : %s\nCITY           : %s\nISP            : %s\nDomain         : %s\nExpired On     : %s\n————————————————————————————————————\n```",
+			data["password"], ipInfo.City, ipInfo.Isp, data["domain"], data["expired"])
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
-		sendAndTrack(bot, reply)
+		deleteLastMessage(bot, chatID)
+		bot.Send(reply)
 		showMainMenu(bot, chatID)
 	} else {
 		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
@@ -280,7 +303,9 @@ func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
 	}
 
 	if res["success"] == true {
-		sendMessage(bot, chatID, "✅ User berhasil dihapus.")
+		msg := tgbotapi.NewMessage(chatID, "✅ Password berhasil dihapus.")
+		deleteLastMessage(bot, chatID)
+		bot.Send(msg)
 		showMainMenu(bot, chatID)
 	} else {
 		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
@@ -301,12 +326,16 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
-		msg := fmt.Sprintf("✅ *User Renewed*\n\n👤 Username: `%s`\n📅 New Expired: `%s`",
-			data["password"], data["expired"])
+		
+		ipInfo, _ := getIpInfo() // Ignore error, just show empty if fails
+
+		msg := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nPassword       : %s\nCITY           : %s\nISP            : %s\nDomain         : %s\nExpired On     : %s\n————————————————————————————————————\n```",
+			data["password"], ipInfo.City, ipInfo.Isp, data["domain"], data["expired"])
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
-		sendAndTrack(bot, reply)
+		deleteLastMessage(bot, chatID)
+		bot.Send(reply)
 		showMainMenu(bot, chatID)
 	} else {
 		sendMessage(bot, chatID, fmt.Sprintf("❌ Gagal: %s", res["message"]))
@@ -328,7 +357,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 			return
 		}
 
-		msg := "📋 *List Users*\n"
+		msg := "📋 *List Passwords*\n"
 		for _, u := range users {
 			user := u.(map[string]interface{})
 			status := "🟢"
@@ -356,7 +385,7 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
 		msg := fmt.Sprintf("📊 *System Info*\n\n🌐 Domain: `%s`\n🖥️ IP Public: `%s`\n🔌 Port: `%s`\n⚙️ Service: `%s`",
-			data["domain"], data["public_ip"], data["private_ip"], data["port"], data["service"])
+			data["domain"], data["public_ip"], data["port"], data["service"])
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
