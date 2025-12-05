@@ -250,7 +250,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 	}
 
-	msgText := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nDomain         : %s\nCITY           : %s\nISP            : %s\n————————————————————————————————————\n```\nSilakan pilih menu:",
+	msgText := fmt.Sprintf("————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nDomain         : %s\nCITY           : %s\nISP            : %s\n————————————————————————————————————\nSilakan pilih menu:",
 		domain, ipInfo.City, ipInfo.Isp)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
@@ -437,8 +437,21 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		
 		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
 
+		domain := "Unknown"
+		if d, ok := data["domain"].(string); ok && d != "" {
+			domain = d
+		} else {
+			if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
+				if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
+					if d, ok := infoData["domain"].(string); ok {
+						domain = d
+					}
+				}
+			}
+		}
+
 		msg := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nPassword       : %s\nCITY           : %s\nISP            : %s\nDomain         : %s\nExpired On     : %s\n————————————————————————————————————\n```",
-			data["password"], ipInfo.City, ipInfo.Isp, data["domain"], data["expired"])
+			data["password"], ipInfo.City, ipInfo.Isp, domain, data["expired"])
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -492,12 +505,17 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
-		msg := fmt.Sprintf("📊 *System Info*\n\n🌐 Domain: `%s`\n🖥️ IP Public: `%s`\n🔌 Port: `%s`\n⚙️ Service: `%s`",
-			data["domain"], data["public_ip"], data["port"], data["service"])
+		
+		ipInfo, _ := getIpInfo()
+
+		msg := fmt.Sprintf("```\n————————————————————————————————————\n               ZIVPN UDP\n————————————————————————————————————\nDomain         : %s\nIP Public      : %s\nPort           : %s\nService        : %s\nCITY           : %s\nISP            : %s\n————————————————————————————————————\n```",
+			data["domain"], data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
-		sendAndTrack(bot, reply)
+		deleteLastMessage(bot, chatID)
+		bot.Send(reply)
+		showMainMenu(bot, chatID)
 	} else {
 		sendMessage(bot, chatID, "❌ Gagal mengambil info.")
 	}
