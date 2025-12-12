@@ -14,6 +14,18 @@
 
 ---
 
+## 💳 Persiapan Payment Gateway (Pakasir)
+Jika Anda ingin menggunakan **Paid Bot**, Anda wajib memiliki akun Pakasir.
+
+1.  **Registrasi**: Daftar akun di [https://pakasir.com](https://pakasir.com).
+2.  **Buat Proyek**: Buat proyek baru di dashboard Pakasir.
+3.  **Ambil Kredensial**:
+    *   **Project Slug**: ID unik proyek Anda (bisa dilihat di URL atau detail proyek).
+    *   **API Key**: Kunci rahasia untuk akses API (ada di menu Pengaturan Proyek).
+4.  **Saldo**: Pastikan akun Pakasir Anda aktif (untuk menerima pembayaran QRIS).
+
+---
+
 ## 📥 Instalasi
 
 Jalankan perintah berikut di terminal VPS Anda (sebagai root):
@@ -31,11 +43,33 @@ Saat script berjalan, Anda akan diminta memasukkan:
 3.  **Telegram Bot** (Opsional):
     *   **Bot Token**: Token dari @BotFather.
     *   **Admin ID**: ID Telegram Anda (cek di @userinfobot).
-    *   *Kosongkan jika tidak ingin mengaktifkan bot.*
+    *   **Bot Type**:
+        *   **Free**: Bot standar (Admin Only / Public Mode).
+        *   **Paid**: Bot dengan integrasi Payment Gateway (Pakasir).
+    *   **Paid Bot Config** (Jika memilih Paid):
+        *   **Pakasir Slug**: Slug project dari dashboard Pakasir.
+        *   **Pakasir API Key**: API Key dari dashboard Pakasir.
+        *   **Daily Price**: Harga per hari (IDR).
+        *   **Default IP Limit**: Batas maksimal device per akun.
 
 ---
 
 ## 🤖 Telegram Bot Usage
+
+### Free Bot
+*   **/start**: Menampilkan Menu Utama.
+*   **Create/Delete/Renew**: Manajemen user manual.
+*   **Public/Private Mode**: Toggle akses bot untuk umum atau hanya admin.
+
+### Paid Bot (Pakasir)
+Bot ini memungkinkan user membeli akun secara otomatis menggunakan QRIS.
+*   **Flow Pembelian**:
+    1.  User klik **Beli Akun Premium**.
+    2.  User memasukkan username dan durasi.
+    3.  Bot menghitung harga (`Durasi * Harga Harian`) dan mengirim QRIS.
+    4.  User membayar dan klik **Cek Pembayaran**.
+    5.  Jika sukses, akun dibuat otomatis.
+*   **Minimum Transaksi**: Rp 500 (Ketentuan Pakasir).
 
 Jika Anda mengaktifkan bot, Anda bisa mengelola VPN langsung dari chat Telegram.
 
