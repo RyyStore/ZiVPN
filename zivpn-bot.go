@@ -237,21 +237,28 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	sendAndTrack(bot, msg)
 }
-
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	ipInfo, _ := getIpInfo()
-	domain := "Unknown"
 	
+	// Ambil domain dari /info atau default
+	domain := "udp.autoftbot.com"
 	if res, err := apiCall("GET", "/info", nil); err == nil && res["success"] == true {
 		if data, ok := res["data"].(map[string]interface{}); ok {
-			if d, ok := data["domain"].(string); ok {
+			if d, ok := data["domain"].(string); ok && d != "" {
 				domain = d
 			}
 		}
 	}
 
-	msgText := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n           MENU ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n━━━━━━━━━━━━━━━━━━━━━\n```\n👇 Silakan pilih menu dibawah ini:",
-		domain, ipInfo.City, ipInfo.Isp)
+	msgText := fmt.Sprintf(`  
+━━━━━━━━━━━━━━━━━━━━━  
+    MENU ZIVPN UDP  
+━━━━━━━━━━━━━━━━━━━━━  
+ • Domain   : %s  
+ • City     : %s  
+ • ISP      : %s  
+━━━━━━━━━━━━━━━━━━━━━  
+`, domain, ipInfo.City, ipInfo.Isp) + "\n👇 Silakan pilih menu dibawah ini:"
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
 	msg.ParseMode = "Markdown"
@@ -383,11 +390,25 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
+		ipInfo, _ := getIpInfo()
 		
-		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
-		
-		msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n         ACCOUNT ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\nPassword       : %s\nCITY           : %s\nISP            : %s\nDomain         : %s\nExpired On     : %s\n━━━━━━━━━━━━━━━━━━━━━\n```",
-			data["password"], ipInfo.City, ipInfo.Isp, data["domain"], data["expired"])
+		msg := fmt.Sprintf(```
+━━━━━━━━━━━━━━━━━━━━━
+  ACCOUNT ZIVPN UDP
+━━━━━━━━━━━━━━━━━━━━━
+Password   : %s
+CITY       : %s  
+ISP        : %s
+Domain     : %s
+Expired On : %s
+━━━━━━━━━━━━━━━━━━━━━
+````, 
+			data["password"], 
+			ipInfo.City, 
+			ipInfo.Isp, 
+			data["domain"], 
+			data["expired"],
+		)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
@@ -434,24 +455,31 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
+		ipInfo, _ := getIpInfo()
 		
-		ipInfo, _ := getIpInfo() // Abaikan kesalahan, cukup tampilkan kosong jika gagal
-
-		domain := "Unknown"
+		// Fallback domain lebih clean
+		domain := "udp.autoftbot.com" // Default
 		if d, ok := data["domain"].(string); ok && d != "" {
 			domain = d
-		} else {
-			if infoRes, err := apiCall("GET", "/info", nil); err == nil && infoRes["success"] == true {
-				if infoData, ok := infoRes["data"].(map[string]interface{}); ok {
-					if d, ok := infoData["domain"].(string); ok {
-						domain = d
-					}
-				}
-			}
 		}
 
-		msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n         ACCOUNT ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\nPassword       : %s\nCITY           : %s\nISP            : %s\nDomain         : %s\nExpired On     : %s\n━━━━━━━━━━━━━━━━━━━━━\n```",
-			data["password"], ipInfo.City, ipInfo.Isp, domain, data["expired"])
+		msg := fmt.Sprintf(```
+━━━━━━━━━━━━━━━━━━━━━
+  ACCOUNT ZIVPN UDP
+━━━━━━━━━━━━━━━━━━━━━
+Password   : %s
+CITY       : %s
+ISP        : %s
+Domain     : %s
+Expired On : %s
+━━━━━━━━━━━━━━━━━━━━━
+````, 
+			data["password"], 
+			ipInfo.City, 
+			ipInfo.Isp, 
+			domain, 
+			data["expired"],
+		)
 		
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
