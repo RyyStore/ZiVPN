@@ -44,8 +44,9 @@ type BotConfig struct {
 }
 
 type IpInfo struct {
-	City string `json:"city"`
-	Isp  string `json:"isp"`
+	City  string `json:"city"`
+	Isp   string `json:"isp"`
+	Query string `json:"query"`
 }
 
 type UserData struct {
@@ -633,10 +634,11 @@ func sendAccountInfo(bot *tgbotapi.BotAPI, chatID int64, data map[string]interfa
 		domain = "(Not Configured)"
 	}
 
-	msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n  ACCOUNT ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\nPassword   : %s\nCITY       : %s\nISP        : %s\nDomain     : %s\nExpired On : %s\n━━━━━━━━━━━━━━━━━━━━━\n```",
+	msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n  ACCOUNT ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\nPassword   : %s\nCITY       : %s\nISP        : %s\nIP ISP     : %s\nDomain     : %s\nExpired On : %s\n━━━━━━━━━━━━━━━━━━━━━\n```",
 		data["password"],
 		ipInfo.City,
 		ipInfo.Isp,
+		ipInfo.Query,
 		domain,
 		data["expired"],
 	)
