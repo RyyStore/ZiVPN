@@ -186,7 +186,6 @@ if [[ -n "$bot_token" ]] && [[ -n "$admin_id" ]]; then
     read -p "Pakasir Project Slug: " pakasir_slug
     read -p "Pakasir API Key     : " pakasir_key
     read -p "Daily Price (IDR)   : " daily_price
-    read -p "Daily Price (IDR)   : " daily_price
     
     echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"public\", \"domain\": \"$domain\", \"pakasir_slug\": \"$pakasir_slug\", \"pakasir_api_key\": \"$pakasir_key\", \"daily_price\": $daily_price}" > /etc/zivpn/bot-config.json
     bot_file="zivpn-paid-bot.go"
