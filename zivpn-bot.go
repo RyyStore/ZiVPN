@@ -230,16 +230,9 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 			return
 		}
 		tempUserData[userID]["days"] = text
-		userStates[userID] = "create_limit"
-		sendMessage(bot, chatID, "💻 Masukkan Max Login (1-100):")
-
-	case "create_limit":
-		limit, ok := validateNumber(bot, chatID, text, 1, 100, "Limit")
-		if !ok {
-			return
-		}
-		days, _ := strconv.Atoi(tempUserData[userID]["days"])
-		createUser(bot, chatID, tempUserData[userID]["username"], days, limit, config)
+		
+		days, _ := strconv.Atoi(text)
+		createUser(bot, chatID, tempUserData[userID]["username"], days, config)
 		resetState(userID)
 
 	case "renew_days":
@@ -307,11 +300,10 @@ func toggleMode(bot *tgbotapi.BotAPI, chatID int64, userID int64, config *BotCon
 	showMainMenu(bot, chatID, config)
 }
 
-func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, limit int, config *BotConfig) {
+func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, config *BotConfig) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": username,
 		"days":     days,
-		"ip_limit": limit,
 	})
 
 	if err != nil {
@@ -321,7 +313,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, l
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
-		sendAccountInfo(bot, chatID, data, limit, config)
+		sendAccountInfo(bot, chatID, data, config)
 	} else {
 		replyError(bot, chatID, fmt.Sprintf("Gagal: %s", res["message"]))
 		showMainMenu(bot, chatID, config)
@@ -343,7 +335,7 @@ func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int, co
 		data := res["data"].(map[string]interface{})
 		// For renew, we might not have the limit handy, so passing 0 or fetching it would be ideal.
 		// But for now, let's just display what we have.
-		sendAccountInfo(bot, chatID, data, 0, config)
+		sendAccountInfo(bot, chatID, data, config)
 	} else {
 		replyError(bot, chatID, fmt.Sprintf("Gagal: %s", res["message"]))
 		showMainMenu(bot, chatID, config)
