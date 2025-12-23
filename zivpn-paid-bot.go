@@ -795,7 +795,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, request
 	var userID int64 = 0
 	if len(requesterID) > 0 {
 		userID = requesterID[0]
-		if c, err := bot.GetChat(tgbotapi.ChatConfig{ChatID: userID}); err == nil {
+			if c, err := bot.GetChat(tgbotapi.ChatInfoConfig{ChatID: userID}); err == nil {
 			if c.UserName != "" {
 				userName = c.UserName
 			} else if c.FirstName != "" {
