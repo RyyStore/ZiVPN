@@ -649,7 +649,8 @@ func startPaymentChecker(bot *tgbotapi.BotAPI, config *BotConfig) {
 						required := days * config.DailyPrice
 						if getBalance(userID) >= required {
 							deductBalance(userID, required)
-							createUser(bot, chatID, userID, password.(string), days, config)
+							// tempUserData stores strings, so password is already a string
+							createUser(bot, chatID, userID, password, days, config)
 						} else {
 							sendMessage(bot, chatID, "Pembayaran berhasil, tetapi saldo tidak mencukupi untuk pemotongan. Silakan hubungi admin.")
 						}
