@@ -820,23 +820,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, request
 
 	todayCount, weekCount, monthCount, _ := computeMetrics()
 
-	msgText := fmt.Sprintf("```
-━━━━━━━━━━━━━━━━━━━━━
-  RyyStore Zivpn UDP
-━━━━━━━━━━━━━━━━━━━━━
-Hai %s
-Saldo Anda : Rp %d
-Akun dibuat oleh Anda : %d
-Statistik : Hari ini %d • Minggu ini %d • Bulan ini %d
-━━━━━━━━━━━━━━━━━━━━━
- • Domain   : %s
- • City     : %s
- • ISP      : %s
- • Harga    : Rp %d / Hari
-━━━━━━━━━━━━━━━━━━━━━
-```
-Credit: [RyyStorevp1](https://t.me/RyyStorevp1)
-Bot: [%s](https://t.me/%s)", userName, balance, created, todayCount, weekCount, monthCount, domain, ipInfo.City, ipInfo.Isp, config.DailyPrice, bot.Self.UserName, bot.Self.UserName)
+		msgText := fmt.Sprintf("━━━━━━━━━━━━━━━━━━━━━\n  RyyStore Zivpn UDP\n━━━━━━━━━━━━━━━━━━━━━\nHai %s\nSaldo Anda : Rp %d\nAkun dibuat oleh Anda : %d\nStatistik : Hari ini %d • Minggu ini %d • Bulan ini %d\n━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n • Harga    : Rp %d / Hari\n━━━━━━━━━━━━━━━━━━━━━\n\nCredit: [RyyStorevp1](https://t.me/RyyStorevp1)\nBot: [%s](https://t.me/%s)", userName, balance, created, todayCount, weekCount, monthCount, domain, ipInfo.City, ipInfo.Isp, config.DailyPrice, bot.Self.UserName, bot.Self.UserName)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
 	msg.ParseMode = "Markdown"
