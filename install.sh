@@ -240,7 +240,8 @@ if [[ -n "$bot_token" ]] && [[ -n "$admin_id" ]]; then
   cd /etc/zivpn/api
   run_silent "Downloading Bot Deps" "go get github.com/go-telegram-bot-api/telegram-bot-api/v5"
   
-  if go build -o zivpn-bot "$bot_file" &>/dev/null; then
+  build_log="/tmp/zivpn_bot_build.log"
+  if go build -o zivpn-bot "$bot_file" &> "$build_log"; then
     print_done "Compiling Bot"
     
     cat <<EOF > /etc/systemd/system/zivpn-bot.service
@@ -262,7 +263,9 @@ EOF
     systemctl enable zivpn-bot.service &>/dev/null
     systemctl start zivpn-bot.service &>/dev/null
   else
-    print_fail "Compiling Bot"
+    echo "---- Build log (first 200 lines) ----"
+    sed -n '1,200p' "$build_log" || true
+    print_fail "Compiling Bot (see $build_log)"
   fi
 else
   print_task "Skipping Bot Setup"
