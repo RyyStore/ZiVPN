@@ -67,6 +67,7 @@ type WalletEntry struct {
 	PendingPassword string `json:"pending_password,omitempty"`
 	PendingDays     int    `json:"pending_days,omitempty"`
 	CreatedCount int    `json:"created_count,omitempty"`
+	Banned       bool   `json:"banned,omitempty"`
 }
 
 // ==========================================
@@ -180,6 +181,40 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, config 
 		if userID == config.AdminID {
 			showBackupRestoreMenu(bot, chatID)
 		}
+	case query.Data == "menu_admin_manage":
+		if userID == config.AdminID {
+			showAdminManageMenu(bot, chatID)
+		}
+	case query.Data == "admin_add_balance":
+		if userID == config.AdminID {
+			userStates[userID] = "admin_add_balance_input"
+			sendMessage(bot, chatID, "🟢 Masukkan TelegramID dan jumlah untuk ditambahkan (contoh: 7251232303 50000):")
+		}
+	case query.Data == "admin_remove_balance":
+		if userID == config.AdminID {
+			userStates[userID] = "admin_remove_balance_input"
+			sendMessage(bot, chatID, "🔴 Masukkan TelegramID dan jumlah untuk dikurangkan (contoh: 7251232303 50000):")
+		}
+	case query.Data == "admin_ban":
+		if userID == config.AdminID {
+			userStates[userID] = "admin_ban_input"
+			sendMessage(bot, chatID, "⛔ Masukkan TelegramID untuk diban (contoh: 7251232303):")
+		}
+	case query.Data == "admin_unban":
+		if userID == config.AdminID {
+			userStates[userID] = "admin_unban_input"
+			sendMessage(bot, chatID, "✅ Masukkan TelegramID untuk di-unban (contoh: 7251232303):")
+		}
+	case query.Data == "admin_view_activity":
+		if userID == config.AdminID {
+			today, week, month, _ := computeMetrics()
+			sendMessage(bot, chatID, fmt.Sprintf("📈 Aktivitas: Hari ini %d • Minggu ini %d • Bulan ini %d", today, week, month))
+		}
+	case query.Data == "admin_forward_mode":
+		if userID == config.AdminID {
+			userStates[userID] = "admin_forward_mode"
+			sendMessage(bot, chatID, "📨 Silakan forward pesan dari pengguna ke chat ini. Setelah diterima, Anda akan diberi opsi tindakan.")
+		}
 	case query.Data == "menu_admin_create_free":
 		if userID == config.AdminID {
 			startAdminCreateFree(bot, chatID, userID, config)
@@ -242,7 +277,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 			return
 		}
 		password := tempUserData[userID]["password"]
-		createUser(bot, chatID, password, days, config)
+		createUser(bot, chatID, userID, password, days, config)
 		delete(tempUserData, userID)
 		delete(userStates, userID)
     
@@ -375,6 +410,145 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 			replyError(bot, chatID, fmt.Sprintf("Gagal membuat akun: %s", res["message"]))
 		}
 
+	case "admin_add_balance_input":
+		if msg.From.ID != config.AdminID {
+			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+			resetState(userID)
+			return
+		}
+		parts := strings.Fields(text)
+		if len(parts) != 2 {
+			sendMessage(bot, chatID, "Format salah. Contoh: 7251232303 50000")
+			return
+		}
+		tid, err1 := strconv.ParseInt(parts[0], 10, 64)
+		amt, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil {
+			sendMessage(bot, chatID, "ID atau jumlah tidak valid.")
+			resetState(userID)
+			return
+		}
+		if err := addBalance(tid, amt); err != nil {
+			replyError(bot, chatID, "Gagal menambah saldo: "+err.Error())
+		} else {
+			sendMessage(bot, chatID, fmt.Sprintf("✅ Berhasil menambah Rp %d ke user %d", amt, tid))
+		}
+		resetState(userID)
+
+	case "admin_remove_balance_input":
+		if msg.From.ID != config.AdminID {
+			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+			resetState(userID)
+			return
+		}
+		parts := strings.Fields(text)
+		if len(parts) != 2 {
+			sendMessage(bot, chatID, "Format salah. Contoh: 7251232303 50000")
+			return
+		}
+		tid, err1 := strconv.ParseInt(parts[0], 10, 64)
+		amt, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil {
+			sendMessage(bot, chatID, "ID atau jumlah tidak valid.")
+			resetState(userID)
+			return
+		}
+		if err := deductBalance(tid, amt); err != nil {
+			replyError(bot, chatID, "Gagal mengurangi saldo: "+err.Error())
+		} else {
+			sendMessage(bot, chatID, fmt.Sprintf("✅ Berhasil mengurangi Rp %d dari user %d", amt, tid))
+		}
+		resetState(userID)
+
+	case "admin_ban_input":
+		if msg.From.ID != config.AdminID {
+			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+			resetState(userID)
+			return
+		}
+		tid, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			sendMessage(bot, chatID, "TelegramID tidak valid.")
+			resetState(userID)
+			return
+		}
+		wallets, _ := loadWallets()
+		idx := getWalletIndex(wallets, tid)
+		if idx == -1 {
+			wallets = append(wallets, WalletEntry{TelegramID: tid, Balance: 0, TrialUsed: false, Banned: true})
+		} else {
+			wallets[idx].Banned = true
+		}
+		saveWallets(wallets)
+		sendMessage(bot, chatID, fmt.Sprintf("⛔ User %d telah diban.", tid))
+		resetState(userID)
+
+	case "admin_unban_input":
+		if msg.From.ID != config.AdminID {
+			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+			resetState(userID)
+			return
+		}
+		tid, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			sendMessage(bot, chatID, "TelegramID tidak valid.")
+			resetState(userID)
+			return
+		}
+		wallets, _ := loadWallets()
+		idx := getWalletIndex(wallets, tid)
+		if idx != -1 {
+			wallets[idx].Banned = false
+			saveWallets(wallets)
+			sendMessage(bot, chatID, fmt.Sprintf("✅ User %d telah di-unban.", tid))
+		} else {
+			sendMessage(bot, chatID, "User tidak ditemukan di wallet.")
+		}
+		resetState(userID)
+
+	case "admin_forward_mode":
+		// Expect a forwarded message from admin
+		if msg.ForwardFrom == nil {
+			sendMessage(bot, chatID, "Silakan forward pesan dari pengguna yang ingin Anda tindak lanjuti.")
+			return
+		}
+		orig := msg.ForwardFrom.ID
+		// store target and any text
+		mutex.Lock()
+		tempUserData[userID] = make(map[string]string)
+		tempUserData[userID]["forward_target"] = strconv.FormatInt(orig, 10)
+		if msg.Text != "" {
+			tempUserData[userID]["forward_text"] = msg.Text
+		} else if msg.Caption != "" {
+			tempUserData[userID]["forward_text"] = msg.Caption
+		}
+		mutex.Unlock()
+		// prompt admin to type a message to send to the user
+		userStates[userID] = "admin_forward_compose"
+		sendMessage(bot, chatID, fmt.Sprintf("Forward diterima dari %d. Ketik pesan yang ingin Anda kirim ke pengguna ini:", orig))
+
+	case "admin_forward_compose":
+		// admin types message to forward to previously forwarded user
+		targetStr := ""
+		if tmp, ok := tempUserData[userID]["forward_target"]; ok {
+			targetStr = tmp
+		}
+		if targetStr == "" {
+			sendMessage(bot, chatID, "Target tidak ditemukan. Mulai ulang mode forward.")
+			resetState(userID)
+			return
+		}
+		tid, _ := strconv.ParseInt(targetStr, 10, 64)
+		// send the admin's text to the target user
+		pm := tgbotapi.NewMessage(tid, text)
+		if _, err := bot.Send(pm); err != nil {
+			replyError(bot, chatID, "Gagal mengirim pesan ke user: "+err.Error())
+		} else {
+			sendMessage(bot, chatID, fmt.Sprintf("✅ Pesan terkirim ke %d", tid))
+		}
+		delete(tempUserData, userID)
+		resetState(userID)
+
 	case "topup_amount":
 		// parse amount
 		amt, err := strconv.Atoi(text)
@@ -464,7 +638,7 @@ func startPaymentChecker(bot *tgbotapi.BotAPI, config *BotConfig) {
 								pw := wallets[idx].PendingPassword
 								doDays := wallets[idx].PendingDays
 								clearPendingPurchase(userID)
-								createUser(bot, chatID, pw, doDays, config)
+								createUser(bot, chatID, userID, pw, doDays, config)
 								sendMessage(bot, chatID, fmt.Sprintf("✅ Pembelian otomatis selesai. Akun dibuat. Saldo tersisa: Rp %d", getBalance(userID)))
 							}
 						}
@@ -475,7 +649,7 @@ func startPaymentChecker(bot *tgbotapi.BotAPI, config *BotConfig) {
 						required := days * config.DailyPrice
 						if getBalance(userID) >= required {
 							deductBalance(userID, required)
-							createUser(bot, chatID, password, days, config)
+							createUser(bot, chatID, userID, password.(string), days, config)
 						} else {
 							sendMessage(bot, chatID, "Pembayaran berhasil, tetapi saldo tidak mencukupi untuk pemotongan. Silakan hubungi admin.")
 						}
@@ -491,7 +665,7 @@ func startPaymentChecker(bot *tgbotapi.BotAPI, config *BotConfig) {
 	}
 }
 
-func createUser(bot *tgbotapi.BotAPI, chatID int64, password string, days int, config *BotConfig) {
+func createUser(bot *tgbotapi.BotAPI, chatID int64, ownerID int64, password string, days int, config *BotConfig) {
 	res, err := apiCall("POST", "/user/create", map[string]interface{}{
 		"password": password,
 		"days":     days,
@@ -504,9 +678,9 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, password string, days int, c
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
-		// Track metrics and per-user created count
-		incrementCreatedCount(chatID)
-		appendMetric(chatID)
+		// Track metrics and per-user created count using ownerID
+		incrementCreatedCount(ownerID)
+		appendMetric(ownerID)
 		sendAccountInfo(bot, chatID, data, config)
 	} else {
 		replyError(bot, chatID, fmt.Sprintf("Gagal membuat akun: %s", res["message"]))
@@ -871,14 +1045,17 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, request
 }
 
 func sendAccountInfo(bot *tgbotapi.BotAPI, chatID int64, data map[string]interface{}, config *BotConfig) {
-	ipInfo, _ := getIpInfo()
 	domain := config.Domain
 	if domain == "" {
 		domain = "(Not Configured)"
 	}
 
-	msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n  PREMIUM ACCOUNT\n━━━━━━━━━━━━━━━━━━━━━\nPassword   : %s\nCITY       : %s\nISP        : %s\nDomain     : %s\nExpired On : %s\n━━━━━━━━━━━━━━━━━━━━━\n```\nTerima kasih telah berlangganan!",
-		data["password"], ipInfo.City, ipInfo.Isp, domain, data["expired"],
+	// Prefer API-provided fields if available; avoid showing server IP
+	pwd := data["password"]
+	exp := data["expired"]
+
+	msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n  PREMIUM ACCOUNT\n━━━━━━━━━━━━━━━━━━━━━\nPassword   : %s\nDomain     : %s\nExpired On : %s\n━━━━━━━━━━━━━━━━━━━━━\n```\nTerima kasih telah berlangganan!",
+		pwd, domain, exp,
 	)
 
 	reply := tgbotapi.NewMessage(chatID, msg)
@@ -1073,6 +1250,32 @@ func showBackupRestoreMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun Gratis", "menu_admin_create_free"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🧾 Manage Users", "menu_admin_manage"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Kembali", "cancel"),
+		),
+	)
+	sendAndTrack(bot, msg)
+}
+
+func showAdminManageMenu(bot *tgbotapi.BotAPI, chatID int64) {
+	msg := tgbotapi.NewMessage(chatID, "⚙️ *Admin - Manage Users*\nPilih aksi:")
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("➕ Tambah Saldo", "admin_add_balance"),
+			tgbotapi.NewInlineKeyboardButtonData("➖ Kurangi Saldo", "admin_remove_balance"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("⛔ Ban User", "admin_ban"),
+			tgbotapi.NewInlineKeyboardButtonData("✅ Unban User", "admin_unban"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📈 Lihat Aktivitas", "admin_view_activity"),
+			tgbotapi.NewInlineKeyboardButtonData("📨 Mode Forward", "admin_forward_mode"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("❌ Kembali", "cancel"),
