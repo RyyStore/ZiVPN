@@ -795,13 +795,10 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, request
 	var userID int64 = 0
 	if len(requesterID) > 0 {
 		userID = requesterID[0]
-			if c, err := bot.GetChat(tgbotapi.ChatInfoConfig{ChatID: userID}); err == nil {
-			if c.UserName != "" {
-				userName = c.UserName
-			} else if c.FirstName != "" {
-				userName = c.FirstName
-			}
-		}
+		// Avoid calling bot.GetChat to remain compatible with different versions
+		// of the telegram library on target systems. Use a lightweight fallback
+		// username based on the Telegram ID so the menu still shows a friendly label.
+		userName = fmt.Sprintf("Pengguna %d", userID)
 	}
 	if userName == "" {
 		userName = "Pengguna"
