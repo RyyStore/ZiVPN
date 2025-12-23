@@ -31,6 +31,7 @@ const (
 	ApiKeyFile    = "/etc/zivpn/apikey"
 	DomainFile    = "/etc/zivpn/domain"
 	PortFile	  = "/etc/zivpn/port"
+	WalletFile    = "/etc/zivpn/wallets.json"
 )
 
 var ApiUrl = "http://127.0.0.1:" + PortFile + "/api"
@@ -56,6 +57,14 @@ type UserData struct {
 	Password string `json:"password"`
 	Expired  string `json:"expired"`
 	Status   string `json:"status"`
+}
+
+type WalletEntry struct {
+	TelegramID int64 `json:"telegram_id"`
+	Balance    int   `json:"balance"`
+	TrialUsed   bool `json:"trial_used"`
+	PendingPassword string `json:"pending_password,omitempty"`
+	PendingDays     int    `json:"pending_days,omitempty"`
 }
 
 // ==========================================
@@ -155,9 +164,23 @@ func handleCallback(bot *tgbotapi.BotAPI, query *tgbotapi.CallbackQuery, config 
 	case query.Data == "cancel":
 		cancelOperation(bot, chatID, userID, config)
 
+	// New Paid Menu handlers
+	case query.Data == "menu_trial":
+		startTrial(bot, chatID, userID)
+	case query.Data == "menu_renew":
+		startRenew(bot, chatID, userID)
+	case query.Data == "menu_list":
+		listAccounts(bot, chatID)
+	case query.Data == "menu_topup":
+		startTopup(bot, chatID, userID)
+
 	case query.Data == "menu_admin":
 		if userID == config.AdminID {
 			showBackupRestoreMenu(bot, chatID)
+		}
+	case query.Data == "menu_admin_create_free":
+		if userID == config.AdminID {
+			startAdminCreateFree(bot, chatID, userID, config)
 		}
 	case query.Data == "menu_backup_action":
 		if userID == config.AdminID {
@@ -197,8 +220,197 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 		tempUserData[userID]["days"] = text
 		mutex.Unlock()
 
-		// Process Payment
-		processPayment(bot, chatID, userID, days, config)
+		// Create account via balance deduction (Topup model)
+		required := days * config.DailyPrice
+		balance := getBalance(userID)
+		if balance < required {
+			sendMessage(bot, chatID, fmt.Sprintf("⚠️ Saldo Anda: Rp %d. Diperlukan Rp %d untuk membuat akun %d hari. Silakan Topup minimal Rp 5000.", balance, required, days))
+			// Store attempted purchase in wallet so it can be completed after topup
+			if err := setPendingPurchase(userID, tempUserData[userID]["password"], days); err != nil {
+				log.Printf("Failed to set pending purchase for %d: %v", userID, err)
+			}
+			resetState(userID)
+			return
+		}
+
+		// Deduct and create
+		if err := deductBalance(userID, required); err != nil {
+			replyError(bot, chatID, "Gagal memproses saldo: "+err.Error())
+			resetState(userID)
+			return
+		}
+		password := tempUserData[userID]["password"]
+		createUser(bot, chatID, password, days, config)
+		delete(tempUserData, userID)
+		delete(userStates, userID)
+    
+	// Trial flow: ask for password, then create with 1 day
+	case "trial_password":
+		if !validatePassword(bot, chatID, text) {
+			return
+		}
+		// Enforce trial policy: if user has zero balance, allow only once
+		if getBalance(userID) == 0 {
+			if hasUsedTrial(userID) {
+				sendMessage(bot, chatID, "⚠️ Anda sudah menggunakan trial. Untuk mendapatkan trial lagi, silakan Topup minimal Rp 5000.")
+				resetState(userID)
+				return
+			}
+		}
+		password := text
+		// Create trial for 1 day
+		res, err := apiCall("POST", "/user/create", map[string]interface{}{
+			"password": password,
+			"days":     1,
+		})
+		if err != nil {
+			replyError(bot, chatID, "Error API: "+err.Error())
+			resetState(userID)
+			return
+		}
+		if res["success"] == true {
+			// mark trial used only if user had zero balance
+			if getBalance(userID) == 0 {
+				markTrialUsed(userID)
+			}
+			data := res["data"].(map[string]interface{})
+			resetState(userID)
+			sendAccountInfo(bot, chatID, data, config)
+		} else {
+			resetState(userID)
+			replyError(bot, chatID, fmt.Sprintf("Gagal membuat trial: %s", res["message"]))
+		}
+
+	// Renew flow
+	case "renew_password":
+		mutex.Lock()
+		tempUserData[userID] = make(map[string]string)
+		tempUserData[userID]["password"] = text
+		tempUserData[userID]["chat_id"] = strconv.FormatInt(chatID, 10)
+		mutex.Unlock()
+		userStates[userID] = "renew_days"
+		sendMessage(bot, chatID, "⏳ Masukkan Durasi Perpanjangan (hari):")
+
+	case "renew_days":
+		days, ok := validateNumber(bot, chatID, text, 1, 3650, "Durasi")
+		if !ok {
+			return
+		}
+		pwd := tempUserData[userID]["password"]
+		// Renew via balance deduction
+		required := days * config.DailyPrice
+		if getBalance(userID) < required {
+			sendMessage(bot, chatID, fmt.Sprintf("⚠️ Saldo tidak mencukupi. Diperlukan Rp %d. Silakan Topup minimal Rp 5000.", required))
+			resetState(userID)
+			return
+		}
+		// Deduct and call renew API
+		if err := deductBalance(userID, required); err != nil {
+			replyError(bot, chatID, "Gagal memproses saldo: "+err.Error())
+			resetState(userID)
+			return
+		}
+		res, err := apiCall("POST", "/user/renew", map[string]interface{}{
+			"password": pwd,
+			"days":     days,
+		})
+		resetState(userID)
+		if err != nil {
+			replyError(bot, chatID, "Error API: "+err.Error())
+			return
+		}
+		if res["success"] == true {
+			data := res["data"].(map[string]interface{})
+			sendMessage(bot, chatID, fmt.Sprintf("✅ User %s berhasil diperpanjang. Expired: %s\nSaldo tersisa: Rp %d", data["password"], data["expired"], getBalance(userID)))
+			showMainMenu(bot, chatID, config)
+		} else {
+			replyError(bot, chatID, fmt.Sprintf("Gagal memperpanjang: %s", res["message"]))
+		}
+
+	// Admin create free flow
+	case "admin_create_password":
+		if msg.From.ID != config.AdminID {
+			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+			resetState(userID)
+			return
+		}
+		if !validatePassword(bot, chatID, text) {
+			return
+		}
+		mutex.Lock()
+		tempUserData[userID] = make(map[string]string)
+		tempUserData[userID]["password"] = text
+		tempUserData[userID]["chat_id"] = strconv.FormatInt(chatID, 10)
+		mutex.Unlock()
+		userStates[userID] = "admin_create_days"
+		sendMessage(bot, chatID, "⏳ Masukkan Durasi (hari) untuk akun gratis:")
+
+	case "admin_create_days":
+	case "topup_amount":
+		// parse amount
+		amt, err := strconv.Atoi(text)
+		if err != nil || amt < 5000 {
+			sendMessage(bot, chatID, "❌ Jumlah tidak valid. Minimal topup adalah Rp 5000. Silakan coba lagi:")
+			return
+		}
+		// create pakasir order
+		orderID := fmt.Sprintf("ZIVPN-TOPUP-%d-%d", userID, time.Now().Unix())
+		payment, err := createPakasirTransaction(config, orderID, amt)
+		if err != nil {
+			replyError(bot, chatID, "Gagal membuat transaksi topup: "+err.Error())
+			resetState(userID)
+			return
+		}
+		// store order for checking
+		mutex.Lock()
+		tempUserData[userID]["order_id"] = orderID
+		tempUserData[userID]["price"] = strconv.Itoa(amt)
+		tempUserData[userID]["action"] = "topup"
+		mutex.Unlock()
+
+		qrUrl := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", payment.PaymentNumber)
+		msgText := fmt.Sprintf("💳 **Topup Saldo**\nJumlah: Rp %d\nSilakan scan QRIS di bawah untuk melakukan pembayaran.\nExpired: %s", amt, payment.ExpiredAt)
+		photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(qrUrl))
+		photo.Caption = msgText
+		photo.ParseMode = "Markdown"
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel"),
+			),
+		)
+		photo.ReplyMarkup = keyboard
+		deleteLastMessage(bot, chatID)
+		sentMsg, err := bot.Send(photo)
+		if err == nil {
+			lastMessageIDs[chatID] = sentMsg.MessageID
+		}
+		delete(userStates, userID)
+		if msg.From.ID != config.AdminID {
+			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+			resetState(userID)
+			return
+		}
+		days, ok := validateNumber(bot, chatID, text, 1, 3650, "Durasi")
+		if !ok {
+			return
+		}
+		pwd := tempUserData[userID]["password"]
+		res, err := apiCall("POST", "/user/create", map[string]interface{}{
+			"password": pwd,
+			"days":     days,
+		})
+		resetState(userID)
+		if err != nil {
+			replyError(bot, chatID, "Error API: "+err.Error())
+			return
+		}
+		if res["success"] == true {
+			data := res["data"].(map[string]interface{})
+			sendMessage(bot, chatID, fmt.Sprintf("✅ Akun gratis dibuat: %s\nExpired: %s", data["password"], data["expired"]))
+			showMainMenu(bot, chatID, config)
+		} else {
+			replyError(bot, chatID, fmt.Sprintf("Gagal membuat akun: %s", res["message"]))
+		}
 	}
 }
 
@@ -216,52 +428,8 @@ func startCreateUser(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
 }
 
 func processPayment(bot *tgbotapi.BotAPI, chatID int64, userID int64, days int, config *BotConfig) {
-	price := days * config.DailyPrice
-	if price < 500 {
-		sendMessage(bot, chatID, fmt.Sprintf("❌ Total harga Rp %d. Minimal transaksi adalah Rp 500.\nSilakan tambah durasi.", price))
-		return
-	}
-	orderID := fmt.Sprintf("ZIVPN-%d-%d", userID, time.Now().Unix())
-
-	// Call Pakasir API
-	payment, err := createPakasirTransaction(config, orderID, price)
-	if err != nil {
-		replyError(bot, chatID, "Gagal membuat pembayaran: "+err.Error())
-		resetState(userID)
-		return
-	}
-
-	// Store Order ID for verification
-	mutex.Lock()
-	tempUserData[userID]["order_id"] = orderID
-	tempUserData[userID]["price"] = strconv.Itoa(price)
-	mutex.Unlock()
-
-	// Generate QR Image URL
-	qrUrl := fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", payment.PaymentNumber)
-
-	msgText := fmt.Sprintf("💳 **Tagihan Pembayaran**\n\nPassword: `%s`\nDurasi: %d Hari\nTotal: Rp %d\n\nSilakan scan QRIS di atas untuk membayar.\nSistem akan otomatis mengecek pembayaran setiap menit.\nExpired: %s",
-		tempUserData[userID]["password"], days, price, payment.ExpiredAt)
-
-	photo := tgbotapi.NewPhoto(chatID, tgbotapi.FileURL(qrUrl))
-	photo.Caption = msgText
-	photo.ParseMode = "Markdown"
-
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel"),
-		),
-	)
-	photo.ReplyMarkup = keyboard
-
-	deleteLastMessage(bot, chatID)
-	sentMsg, err := bot.Send(photo)
-	if err == nil {
-		lastMessageIDs[chatID] = sentMsg.MessageID
-	}
-
-	// Clear state but keep tempUserData for verification
-	delete(userStates, userID)
+	// Now handled by wallet topup model. This function is deprecated.
+	sendMessage(bot, chatID, "Fitur pembayaran langsung sudah digantikan oleh sistem Topup. Silakan gunakan menu Topup Saldo terlebih dahulu jika saldo tidak mencukupi.")
 }
 
 func startPaymentChecker(bot *tgbotapi.BotAPI, config *BotConfig) {
@@ -272,14 +440,43 @@ func startPaymentChecker(bot *tgbotapi.BotAPI, config *BotConfig) {
 			if orderID, ok := data["order_id"]; ok {
 				price := data["price"]
 				chatID, _ := strconv.ParseInt(data["chat_id"], 10, 64)
-				
+				// Determine action (topup or account_purchase)
+				action := data["action"]
 				status, err := checkPakasirStatus(config, orderID, price)
 				if err == nil && (status == "completed" || status == "success") {
-					// Payment Success
-					password := data["password"]
-					days, _ := strconv.Atoi(data["days"])
-					
-					createUser(bot, chatID, password, days, config)
+					if action == "topup" {
+						// Add balance to user's wallet
+						amt, _ := strconv.Atoi(price)
+						addBalance(userID, amt)
+						current := getBalance(userID)
+						sendMessage(bot, chatID, fmt.Sprintf("✅ Topup berhasil: Rp %d. Saldo Anda saat ini: Rp %d", amt, current))
+						// If there is a pending purchase, try to complete it
+						wallets, _ := loadWallets()
+						idx := getWalletIndex(wallets, userID)
+						if idx != -1 && wallets[idx].PendingPassword != "" && wallets[idx].PendingDays > 0 {
+							required := wallets[idx].PendingDays * config.DailyPrice
+							if current >= required {
+								// deduct and create account
+								deductBalance(userID, required)
+								pw := wallets[idx].PendingPassword
+								doDays := wallets[idx].PendingDays
+								clearPendingPurchase(userID)
+								createUser(bot, chatID, pw, doDays, config)
+								sendMessage(bot, chatID, fmt.Sprintf("✅ Pembelian otomatis selesai. Akun dibuat. Saldo tersisa: Rp %d", getBalance(userID)))
+							}
+						}
+					} else if action == "buy_account" {
+						password := data["password"]
+						days, _ := strconv.Atoi(data["days"])
+						// Deduct balance and create account
+						required := days * config.DailyPrice
+						if getBalance(userID) >= required {
+							deductBalance(userID, required)
+							createUser(bot, chatID, password, days, config)
+						} else {
+							sendMessage(bot, chatID, "Pembayaran berhasil, tetapi saldo tidak mencukupi untuk pemotongan. Silakan hubungi admin.")
+						}
+					}
 					delete(tempUserData, userID)
 					delete(userStates, userID)
 				} else if err != nil {
@@ -351,6 +548,136 @@ func createPakasirTransaction(config *BotConfig, orderID string, amount int) (*P
 	return nil, fmt.Errorf("invalid response from Pakasir")
 }
 
+// -------------------- Wallet helpers --------------------
+func loadWallets() ([]WalletEntry, error) {
+	var wallets []WalletEntry
+	data, err := ioutil.ReadFile(WalletFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return wallets, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &wallets); err != nil {
+		return nil, err
+	}
+	return wallets, nil
+}
+
+func saveWallets(wallets []WalletEntry) error {
+	data, err := json.MarshalIndent(wallets, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(WalletFile, data, 0644)
+}
+
+func getWalletIndex(wallets []WalletEntry, telegramID int64) int {
+	for i, w := range wallets {
+		if w.TelegramID == telegramID {
+			return i
+		}
+	}
+	return -1
+}
+
+func getBalance(telegramID int64) int {
+	wallets, err := loadWallets()
+	if err != nil {
+		return 0
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		return 0
+	}
+	return wallets[idx].Balance
+}
+
+func addBalance(telegramID int64, amount int) error {
+	wallets, err := loadWallets()
+	if err != nil {
+		return err
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		wallets = append(wallets, WalletEntry{TelegramID: telegramID, Balance: amount, TrialUsed: false})
+	} else {
+		wallets[idx].Balance += amount
+	}
+	return saveWallets(wallets)
+}
+
+func deductBalance(telegramID int64, amount int) error {
+	wallets, err := loadWallets()
+	if err != nil {
+		return err
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		return nil
+	}
+	wallets[idx].Balance -= amount
+	if wallets[idx].Balance < 0 {
+		wallets[idx].Balance = 0
+	}
+	return saveWallets(wallets)
+}
+
+func hasUsedTrial(telegramID int64) bool {
+	wallets, err := loadWallets()
+	if err != nil {
+		return false
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		return false
+	}
+	return wallets[idx].TrialUsed
+}
+
+func markTrialUsed(telegramID int64) error {
+	wallets, err := loadWallets()
+	if err != nil {
+		return err
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		wallets = append(wallets, WalletEntry{TelegramID: telegramID, Balance: 0, TrialUsed: true})
+	} else {
+		wallets[idx].TrialUsed = true
+	}
+	return saveWallets(wallets)
+}
+
+func setPendingPurchase(telegramID int64, password string, days int) error {
+	wallets, err := loadWallets()
+	if err != nil {
+		return err
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		wallets = append(wallets, WalletEntry{TelegramID: telegramID, Balance: 0, TrialUsed: false, PendingPassword: password, PendingDays: days})
+	} else {
+		wallets[idx].PendingPassword = password
+		wallets[idx].PendingDays = days
+	}
+	return saveWallets(wallets)
+}
+
+func clearPendingPurchase(telegramID int64) error {
+	wallets, err := loadWallets()
+	if err != nil {
+		return err
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		return nil
+	}
+	wallets[idx].PendingPassword = ""
+	wallets[idx].PendingDays = 0
+	return saveWallets(wallets)
+}
+
 func checkPakasirStatus(config *BotConfig, orderID string, amountStr string) (string, error) {
 	url := fmt.Sprintf("https://app.pakasir.com/api/transactiondetail?project=%s&amount=%s&order_id=%s&api_key=%s",
 		config.PakasirSlug, amountStr, orderID, config.PakasirApiKey)
@@ -389,6 +716,14 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig) {
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🛒 Beli Akun Premium", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("💳 Topup Saldo", "menu_topup"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🆓 Trial Akun", "menu_trial"),
+			tgbotapi.NewInlineKeyboardButtonData("🔁 Renew Akun", "menu_renew"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📋 List Akun", "menu_list"),
 		),
 	)
 
@@ -423,6 +758,95 @@ func sendAccountInfo(bot *tgbotapi.BotAPI, chatID int64, data map[string]interfa
 	bot.Send(reply)
 	showMainMenu(bot, chatID, config)
 }
+
+// Start trial flow: ask for desired password then create a 1-day account
+func startTrial(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
+	userStates[userID] = "trial_password"
+	mutex.Lock()
+	tempUserData[userID] = make(map[string]string)
+	tempUserData[userID]["chat_id"] = strconv.FormatInt(chatID, 10)
+	mutex.Unlock()
+	sendMessage(bot, chatID, "🆓 Trial Akun\nSilakan masukkan password yang diinginkan (3-20 karakter):")
+}
+
+// Start renew flow: ask for password then duration
+func startRenew(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
+	userStates[userID] = "renew_password"
+	mutex.Lock()
+	tempUserData[userID] = make(map[string]string)
+	tempUserData[userID]["chat_id"] = strconv.FormatInt(chatID, 10)
+	mutex.Unlock()
+	sendMessage(bot, chatID, "🔁 Renew Akun\nSilakan masukkan password akun yang ingin diperpanjang:")
+}
+
+// List accounts: call API and show a formatted list
+func listAccounts(bot *tgbotapi.BotAPI, chatID int64) {
+	res, err := apiCall("GET", "/users", nil)
+	if err != nil {
+		replyError(bot, chatID, "Error API: "+err.Error())
+		return
+	}
+	if res["success"] != true {
+		replyError(bot, chatID, fmt.Sprintf("Gagal mengambil daftar: %v", res["message"]))
+		return
+	}
+	data := res["data"]
+	usersArr, ok := data.([]interface{})
+	if !ok {
+		replyError(bot, chatID, "Format data tidak sesuai dari API")
+		return
+	}
+
+	if len(usersArr) == 0 {
+		sendMessage(bot, chatID, "📋 Daftar akun kosong.")
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString("📋 Daftar Akun:\n")
+	for i, u := range usersArr {
+		if i >= 200 { // safety cap
+			b.WriteString("\n...dan masih banyak lagi...\n")
+			break
+		}
+		m, ok := u.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		pwd := m["password"]
+		exp := m["expired"]
+		status := m["status"]
+		b.WriteString(fmt.Sprintf("%d. %s — Exp: %s — %s\n", i+1, pwd, exp, status))
+	}
+
+	sendMessage(bot, chatID, b.String())
+}
+
+// Admin: start free-account creation flow
+func startAdminCreateFree(bot *tgbotapi.BotAPI, chatID int64, userID int64, config *BotConfig) {
+	if userID != config.AdminID {
+		replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+		return
+	}
+	userStates[userID] = "admin_create_password"
+	mutex.Lock()
+	tempUserData[userID] = make(map[string]string)
+	tempUserData[userID]["chat_id"] = strconv.FormatInt(chatID, 10)
+	mutex.Unlock()
+	sendMessage(bot, chatID, "➕ Buat Akun Gratis\nMasukkan password untuk akun baru (3-20 karakter):")
+}
+
+// ---------------- Topup flow ----------------
+func startTopup(bot *tgbotapi.BotAPI, chatID int64, userID int64) {
+	userStates[userID] = "topup_amount"
+	mutex.Lock()
+	tempUserData[userID] = make(map[string]string)
+	tempUserData[userID]["chat_id"] = strconv.FormatInt(chatID, 10)
+	mutex.Unlock()
+	sendMessage(bot, chatID, "💳 Topup Saldo\nMasukkan jumlah topup minimal Rp 5000 (contoh: 5000):")
+}
+
+
 
 func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
@@ -517,6 +941,9 @@ func showBackupRestoreMenu(bot *tgbotapi.BotAPI, chatID int64) {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⬇️ Backup Data", "menu_backup_action"),
 			tgbotapi.NewInlineKeyboardButtonData("⬆️ Restore Data", "menu_restore_action"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("➕ Buat Akun Gratis", "menu_admin_create_free"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("❌ Kembali", "cancel"),
