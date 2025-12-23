@@ -820,7 +820,22 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, request
 
 	todayCount, weekCount, monthCount, _ := computeMetrics()
 
-		msgText := fmt.Sprintf("━━━━━━━━━━━━━━━━━━━━━\n  RyyStore Zivpn UDP\n━━━━━━━━━━━━━━━━━━━━━\nHai %s\nSaldo Anda : Rp %d\nAkun dibuat oleh Anda : %d\nStatistik : Hari ini %d • Minggu ini %d • Bulan ini %d\n━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n • Harga    : Rp %d / Hari\n━━━━━━━━━━━━━━━━━━━━━\n\nCredit: [RyyStorevp1](https://t.me/RyyStorevp1)\nBot: [%s](https://t.me/%s)", userName, balance, created, todayCount, weekCount, monthCount, domain, ipInfo.City, ipInfo.Isp, config.DailyPrice, bot.Self.UserName, bot.Self.UserName)
+			msgText := fmt.Sprintf(`━━━━━━━━━━━━━━━━━━━━━
+		RyyStore Zivpn UDP
+	━━━━━━━━━━━━━━━━━━━━━
+	Hai %s
+	Saldo Anda : Rp %d
+	Akun dibuat oleh Anda : %d
+	Statistik : Hari ini %d • Minggu ini %d • Bulan ini %d
+	━━━━━━━━━━━━━━━━━━━━━
+	 • Domain   : %s
+	 • City     : %s
+	 • ISP      : %s
+	 • Harga    : Rp %d / Hari
+	━━━━━━━━━━━━━━━━━━━━━
+
+	Credit: [RyyStorevp1](https://t.me/RyyStorevp1)
+	Bot: [%s](https://t.me/%s)`, userName, balance, created, todayCount, weekCount, monthCount, domain, ipInfo.City, ipInfo.Isp, config.DailyPrice, bot.Self.UserName, bot.Self.UserName)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
 	msg.ParseMode = "Markdown"
@@ -857,7 +872,18 @@ func sendAccountInfo(bot *tgbotapi.BotAPI, chatID int64, data map[string]interfa
 		domain = "(Not Configured)"
 	}
 
-	msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n  PREMIUM ACCOUNT\n━━━━━━━━━━━━━━━━━━━━━\nPassword   : %s\nCITY       : %s\nISP        : %s\nDomain     : %s\nExpired On : %s\n━━━━━━━━━━━━━━━━━━━━━\n```\nTerima kasih telah berlangganan!",
+	msg := fmt.Sprintf(```
+━━━━━━━━━━━━━━━━━━━━━
+  PREMIUM ACCOUNT
+━━━━━━━━━━━━━━━━━━━━━
+Password   : %s
+CITY       : %s
+ISP        : %s
+Domain     : %s
+Expired On : %s
+━━━━━━━━━━━━━━━━━━━━━
+```
+Terima kasih telah berlangganan!`,
 		data["password"], ipInfo.City, ipInfo.Isp, domain, data["expired"],
 	)
 
@@ -1030,7 +1056,18 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig) {
 		data := res["data"].(map[string]interface{})
 		ipInfo, _ := getIpInfo()
 
-		msg := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n    INFO ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\nDomain         : %s\nIP Public      : %s\nPort           : %s\nService        : %s\nCITY           : %s\nISP            : %s\n━━━━━━━━━━━━━━━━━━━━━\n```",
+		msg := fmt.Sprintf(```
+━━━━━━━━━━━━━━━━━━━━━
+	INFO ZIVPN UDP
+━━━━━━━━━━━━━━━━━━━━━
+Domain         : %s
+IP Public      : %s
+Port           : %s
+Service        : %s
+CITY           : %s
+ISP            : %s
+━━━━━━━━━━━━━━━━━━━━━
+````,
 			config.Domain, data["public_ip"], data["port"], data["service"], ipInfo.City, ipInfo.Isp)
 
 		reply := tgbotapi.NewMessage(chatID, msg)
