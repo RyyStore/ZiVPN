@@ -179,8 +179,8 @@ echo -ne "${GRAY}(Leave empty to skip)${RESET}\n"
 echo "Pilih mode setup bot:"
 echo "1) Manual setup"
 echo "2) Otomatis setup (gunakan default)"
-read -p "Choice [1]: " setup_mode
-setup_mode=${setup_mode:-1}
+read -p "Choice [2]: " setup_mode
+setup_mode=${setup_mode:-2}
 
 if [[ "$setup_mode" == "2" ]]; then
   # Automatic defaults provided by user
