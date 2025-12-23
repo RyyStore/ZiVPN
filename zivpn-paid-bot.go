@@ -777,6 +777,17 @@ func incrementCreatedCount(telegramID int64) error {
 // UI & Helpers (Simplified for Paid Bot)
 // ==========================================
 
+func getDisplayName(bot *tgbotapi.BotAPI, userID int64) string {
+	if userID == 0 {
+		return ""
+	}
+
+	// Avoid calling bot.GetChat to remain compatible with different
+	// versions of the telegram library on target systems. Return a
+	// simple fallback display name based on the Telegram ID.
+	return fmt.Sprintf("Pengguna %d", userID)
+}
+
 func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, requesterID ...int64) {
 	ipInfo, _ := getIpInfo()
 	domain := config.Domain
@@ -795,10 +806,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, request
 	var userID int64 = 0
 	if len(requesterID) > 0 {
 		userID = requesterID[0]
-		// Avoid calling bot.GetChat to remain compatible with different versions
-		// of the telegram library on target systems. Use a lightweight fallback
-		// username based on the Telegram ID so the menu still shows a friendly label.
-		userName = fmt.Sprintf("Pengguna %d", userID)
+		userName = getDisplayName(bot, userID)
 	}
 	if userName == "" {
 		userName = "Pengguna"
