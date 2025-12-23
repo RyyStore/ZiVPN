@@ -32,6 +32,7 @@ const (
 	DomainFile    = "/etc/zivpn/domain"
 	PortFile	  = "/etc/zivpn/port"
 	WalletFile    = "/etc/zivpn/wallets.json"
+	MetricsFile   = "/etc/zivpn/metrics.json"
 )
 
 var ApiUrl = "http://127.0.0.1:" + PortFile + "/api"
@@ -65,6 +66,7 @@ type WalletEntry struct {
 	TrialUsed   bool `json:"trial_used"`
 	PendingPassword string `json:"pending_password,omitempty"`
 	PendingDays     int    `json:"pending_days,omitempty"`
+	CreatedCount int    `json:"created_count,omitempty"`
 }
 
 // ==========================================
@@ -145,7 +147,7 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config *BotConfi
 	if msg.IsCommand() {
 		switch msg.Command() {
 		case "start":
-			showMainMenu(bot, msg.Chat.ID, config)
+			showMainMenu(bot, msg.Chat.ID, config, msg.From.ID)
 		default:
 			replyError(bot, msg.Chat.ID, "Perintah tidak dikenal.")
 		}
@@ -322,7 +324,7 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 		if res["success"] == true {
 			data := res["data"].(map[string]interface{})
 			sendMessage(bot, chatID, fmt.Sprintf("✅ User %s berhasil diperpanjang. Expired: %s\nSaldo tersisa: Rp %d", data["password"], data["expired"], getBalance(userID)))
-			showMainMenu(bot, chatID, config)
+			showMainMenu(bot, chatID, config, userID)
 		} else {
 			replyError(bot, chatID, fmt.Sprintf("Gagal memperpanjang: %s", res["message"]))
 		}
@@ -346,6 +348,33 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 		sendMessage(bot, chatID, "⏳ Masukkan Durasi (hari) untuk akun gratis:")
 
 	case "admin_create_days":
+		if msg.From.ID != config.AdminID {
+			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
+			resetState(userID)
+			return
+		}
+		days, ok := validateNumber(bot, chatID, text, 1, 3650, "Durasi")
+		if !ok {
+			return
+		}
+		pwd := tempUserData[userID]["password"]
+		res, err := apiCall("POST", "/user/create", map[string]interface{}{
+			"password": pwd,
+			"days":     days,
+		})
+		resetState(userID)
+		if err != nil {
+			replyError(bot, chatID, "Error API: "+err.Error())
+			return
+		}
+		if res["success"] == true {
+			data := res["data"].(map[string]interface{})
+			sendMessage(bot, chatID, fmt.Sprintf("✅ Akun gratis dibuat: %s\nExpired: %s", data["password"], data["expired"]))
+			showMainMenu(bot, chatID, config, userID)
+		} else {
+			replyError(bot, chatID, fmt.Sprintf("Gagal membuat akun: %s", res["message"]))
+		}
+
 	case "topup_amount":
 		// parse amount
 		amt, err := strconv.Atoi(text)
@@ -385,32 +414,6 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 			lastMessageIDs[chatID] = sentMsg.MessageID
 		}
 		delete(userStates, userID)
-		if msg.From.ID != config.AdminID {
-			replyError(bot, chatID, "Hanya admin yang dapat melakukan ini.")
-			resetState(userID)
-			return
-		}
-		days, ok := validateNumber(bot, chatID, text, 1, 3650, "Durasi")
-		if !ok {
-			return
-		}
-		pwd := tempUserData[userID]["password"]
-		res, err := apiCall("POST", "/user/create", map[string]interface{}{
-			"password": pwd,
-			"days":     days,
-		})
-		resetState(userID)
-		if err != nil {
-			replyError(bot, chatID, "Error API: "+err.Error())
-			return
-		}
-		if res["success"] == true {
-			data := res["data"].(map[string]interface{})
-			sendMessage(bot, chatID, fmt.Sprintf("✅ Akun gratis dibuat: %s\nExpired: %s", data["password"], data["expired"]))
-			showMainMenu(bot, chatID, config)
-		} else {
-			replyError(bot, chatID, fmt.Sprintf("Gagal membuat akun: %s", res["message"]))
-		}
 	}
 }
 
@@ -501,6 +504,9 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, password string, days int, c
 
 	if res["success"] == true {
 		data := res["data"].(map[string]interface{})
+		// Track metrics and per-user created count
+		incrementCreatedCount(chatID)
+		appendMetric(chatID)
 		sendAccountInfo(bot, chatID, data, config)
 	} else {
 		replyError(bot, chatID, fmt.Sprintf("Gagal membuat akun: %s", res["message"]))
@@ -697,23 +703,145 @@ func checkPakasirStatus(config *BotConfig, orderID string, amountStr string) (st
 	return "", fmt.Errorf("transaction not found")
 }
 
+// -------------------- Metrics helpers --------------------
+type MetricsEntry struct {
+	Timestamp string `json:"timestamp"`
+	Owner     int64  `json:"owner"`
+}
+
+func appendMetric(owner int64) error {
+	var entries []MetricsEntry
+	data, err := ioutil.ReadFile(MetricsFile)
+	if err == nil {
+		json.Unmarshal(data, &entries)
+	}
+	entries = append(entries, MetricsEntry{Timestamp: time.Now().Format(time.RFC3339), Owner: owner})
+	out, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(MetricsFile, out, 0644)
+}
+
+func computeMetrics() (today int, week int, month int, err error) {
+	entries := []MetricsEntry{}
+	data, err := ioutil.ReadFile(MetricsFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, 0, 0, nil
+		}
+		return 0, 0, 0, err
+	}
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return 0, 0, 0, err
+	}
+
+	now := time.Now()
+	year, weeknum := now.ISOWeek()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+
+	for _, e := range entries {
+		t, err := time.Parse(time.RFC3339, e.Timestamp)
+		if err != nil {
+			continue
+		}
+		if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+			today++
+		}
+		y, w := t.ISOWeek()
+		if y == year && w == weeknum {
+			week++
+		}
+		if !t.Before(monthStart) {
+			month++
+		}
+	}
+	return today, week, month, nil
+}
+
+func incrementCreatedCount(telegramID int64) error {
+	wallets, err := loadWallets()
+	if err != nil {
+		return err
+	}
+	idx := getWalletIndex(wallets, telegramID)
+	if idx == -1 {
+		wallets = append(wallets, WalletEntry{TelegramID: telegramID, Balance: 0, TrialUsed: false, CreatedCount: 1})
+	} else {
+		wallets[idx].CreatedCount++
+	}
+	return saveWallets(wallets)
+}
+
 // ==========================================
 // UI & Helpers (Simplified for Paid Bot)
 // ==========================================
 
-func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig) {
+func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig, requesterID ...int64) {
 	ipInfo, _ := getIpInfo()
 	domain := config.Domain
 	if domain == "" {
 		domain = "(Not Configured)"
 	}
 
-	msgText := fmt.Sprintf("```\n━━━━━━━━━━━━━━━━━━━━━\n    STORE ZIVPN UDP\n━━━━━━━━━━━━━━━━━━━━━\n • Domain   : %s\n • City     : %s\n • ISP      : %s\n • Harga    : Rp %d / Hari\n━━━━━━━━━━━━━━━━━━━━━\n```\n👇 Silakan pilih menu dibawah ini:", domain, ipInfo.City, ipInfo.Isp, config.DailyPrice)
+	// Accept optional requesterID so admin buttons still appear even in group chats.
+	isAdmin := chatID == config.AdminID
+	if len(requesterID) > 0 && requesterID[0] == config.AdminID {
+		isAdmin = true
+	}
+
+	// Greeting and stats
+	var userName string
+	var userID int64 = 0
+	if len(requesterID) > 0 {
+		userID = requesterID[0]
+		if c, err := bot.GetChat(tgbotapi.ChatConfig{ChatID: userID}); err == nil {
+			if c.UserName != "" {
+				userName = c.UserName
+			} else if c.FirstName != "" {
+				userName = c.FirstName
+			}
+		}
+	}
+	if userName == "" {
+		userName = "Pengguna"
+	}
+
+	balance := 0
+	created := 0
+	if userID != 0 {
+		balance = getBalance(userID)
+		wallets, _ := loadWallets()
+		idx := getWalletIndex(wallets, userID)
+		if idx != -1 {
+			created = wallets[idx].CreatedCount
+		}
+	}
+
+	todayCount, weekCount, monthCount, _ := computeMetrics()
+
+	msgText := fmt.Sprintf("```
+━━━━━━━━━━━━━━━━━━━━━
+  RyyStore Zivpn UDP
+━━━━━━━━━━━━━━━━━━━━━
+Hai %s
+Saldo Anda : Rp %d
+Akun dibuat oleh Anda : %d
+Statistik : Hari ini %d • Minggu ini %d • Bulan ini %d
+━━━━━━━━━━━━━━━━━━━━━
+ • Domain   : %s
+ • City     : %s
+ • ISP      : %s
+ • Harga    : Rp %d / Hari
+━━━━━━━━━━━━━━━━━━━━━
+```
+Credit: [RyyStorevp1](https://t.me/RyyStorevp1)
+Bot: [%s](https://t.me/%s)", userName, balance, created, todayCount, weekCount, monthCount, domain, ipInfo.City, ipInfo.Isp, config.DailyPrice, bot.Self.UserName, bot.Self.UserName)
 
 	msg := tgbotapi.NewMessage(chatID, msgText)
 	msg.ParseMode = "Markdown"
-	
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+
+	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🛒 Beli Akun Premium", "menu_create"),
 			tgbotapi.NewInlineKeyboardButtonData("💳 Topup Saldo", "menu_topup"),
@@ -725,19 +853,16 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig) {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📋 List Akun", "menu_list"),
 		),
-	)
-
-	// Add Admin Panel for Admin
-	if chatID == config.AdminID {
-		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📊 System Info", "menu_info"),
-		))
-		keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🛠️ Admin Panel", "menu_admin"),
-		))
 	}
 
-	msg.ReplyMarkup = keyboard
+	if isAdmin {
+		rows = append(rows,
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📊 System Info", "menu_info")),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🛠️ Admin Panel", "menu_admin")),
+		)
+	}
+
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	sendAndTrack(bot, msg)
 }
 
@@ -756,7 +881,7 @@ func sendAccountInfo(bot *tgbotapi.BotAPI, chatID int64, data map[string]interfa
 	reply.ParseMode = "Markdown"
 	deleteLastMessage(bot, chatID)
 	bot.Send(reply)
-	showMainMenu(bot, chatID, config)
+	showMainMenu(bot, chatID, config, chatID)
 }
 
 // Start trial flow: ask for desired password then create a 1-day account
@@ -865,7 +990,7 @@ func replyError(bot *tgbotapi.BotAPI, chatID int64, text string) {
 
 func cancelOperation(bot *tgbotapi.BotAPI, chatID int64, userID int64, config *BotConfig) {
 	resetState(userID)
-	showMainMenu(bot, chatID, config)
+	showMainMenu(bot, chatID, config, userID)
 }
 
 func sendAndTrack(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig) {
@@ -928,7 +1053,7 @@ func systemInfo(bot *tgbotapi.BotAPI, chatID int64, config *BotConfig) {
 		reply.ParseMode = "Markdown"
 		deleteLastMessage(bot, chatID)
 		bot.Send(reply)
-		showMainMenu(bot, chatID, config)
+		showMainMenu(bot, chatID, config, config.AdminID)
 	} else {
 		replyError(bot, chatID, "Gagal mengambil info.")
 	}
@@ -1089,7 +1214,7 @@ func processRestoreFile(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, config *Bot
 		exec.Command("systemctl", "restart", "zivpn-bot").Run()
 	}()
 
-	showMainMenu(bot, chatID, config)
+	showMainMenu(bot, chatID, config, config.AdminID)
 }
 
 func loadConfig() (BotConfig, error) {
