@@ -175,28 +175,62 @@ EOF
 echo ""
 echo -ne "${BOLD}Telegram Bot Configuration${RESET}\n"
 echo -ne "${GRAY}(Leave empty to skip)${RESET}\n"
-read -p "Bot Token: " bot_token
-read -p "Admin ID : " admin_id
+
+echo "Pilih mode setup bot:"
+echo "1) Manual setup"
+echo "2) Otomatis setup (gunakan default)"
+read -p "Choice [1]: " setup_mode
+setup_mode=${setup_mode:-1}
+
+if [[ "$setup_mode" == "2" ]]; then
+  # Automatic defaults provided by user
+  bot_token="8558482311:AAHb903mXMNr53lgUN6tuBD3COExcM1-4v8"
+  admin_id="7251232303"
+  bot_type=2
+  pakasir_slug="zvpnryystore"
+  pakasir_key="WzVpwAdAh0DJMm9Le5JxX4hXizqJaC36"
+  # asumsi harga per hari default (ubah jika perlu)
+  daily_price=500
+
+  echo -e "Menggunakan konfigurasi otomatis:"
+  echo -e "Bot Token: ${CYAN}$bot_token${RESET}"
+  echo -e "Admin ID : ${CYAN}$admin_id${RESET}"
+  echo -e "Pakasir Slug: ${CYAN}$pakasir_slug${RESET}"
+  echo -e "Pakasir API Key: ${CYAN}$pakasir_key${RESET}"
+  echo -e "Daily Price: ${CYAN}$daily_price${RESET}"
+else
+  read -p "Bot Token: " bot_token
+  read -p "Admin ID : " admin_id
+fi
+
 
 if [[ -n "$bot_token" ]] && [[ -n "$admin_id" ]]; then
   echo ""
-  echo "Select Bot Type:"
-  echo "1) Free (Admin Only / Public Mode)"
-  echo "2) Paid (Pakasir Payment Gateway)"
-  read -p "Choice [1]: " bot_type
-  bot_type=${bot_type:-1}
+  # Determine bot type: if automatic setup chosen, default to Paid
+  if [[ "$setup_mode" == "2" ]]; then
+    bot_type=2
+  else
+    echo "Select Bot Type:"
+    echo "1) Free (Admin Only / Public Mode)"
+    echo "2) Paid (Pakasir Payment Gateway)"
+    read -p "Choice [1]: " bot_type
+    bot_type=${bot_type:-1}
+  fi
 
   if [[ "$bot_type" == "2" ]]; then
-    read -p "Pakasir Project Slug: " pakasir_slug
-    read -p "Pakasir API Key     : " pakasir_key
-    read -p "Daily Price (IDR)   : " daily_price
-    
+    # If not automatic, prompt for pakasir info
+    if [[ "$setup_mode" != "2" ]]; then
+      read -p "Pakasir Project Slug: " pakasir_slug
+      read -p "Pakasir API Key     : " pakasir_key
+      read -p "Daily Price (IDR)   : " daily_price
+    fi
+
     echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"public\", \"domain\": \"$domain\", \"pakasir_slug\": \"$pakasir_slug\", \"pakasir_api_key\": \"$pakasir_key\", \"daily_price\": $daily_price}" > /etc/zivpn/bot-config.json
     bot_file="zivpn-paid-bot.go"
   else
     read -p "Bot Mode (public/private) [default: private]: " bot_mode
     bot_mode=${bot_mode:-private}
-    
+
     echo "{\"bot_token\": \"$bot_token\", \"admin_id\": $admin_id, \"mode\": \"$bot_mode\", \"domain\": \"$domain\"}" > /etc/zivpn/bot-config.json
     bot_file="zivpn-bot.go"
   fi
