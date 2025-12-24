@@ -287,11 +287,14 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string, conf
 			return
 		}
 		// Enforce trial policy: if user has zero balance, allow only once
-		if getBalance(userID) == 0 {
-			if hasUsedTrial(userID) {
-				sendMessage(bot, chatID, "⚠️ Anda sudah menggunakan trial. Untuk mendapatkan trial lagi, silakan Topup minimal Rp 5000.")
-				resetState(userID)
-				return
+		// Admin users are allowed unlimited trials
+		if msg.From.ID != config.AdminID {
+			if getBalance(userID) == 0 {
+				if hasUsedTrial(userID) {
+					sendMessage(bot, chatID, "⚠️ Anda sudah menggunakan trial. Untuk mendapatkan trial lagi, silakan Topup minimal Rp 5000.")
+					resetState(userID)
+					return
+				}
 			}
 		}
 		password := text
